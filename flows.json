@@ -87,7 +87,7 @@
         "type": "function",
         "z": "gen_tab",
         "name": "F1: SOC protect + evening recovery",
-        "func": "var START_SOC   = 17;\nvar STOP_SOC    = 19;\nvar CAPACITY    = 568;\nvar RESERVE     = 20;\nvar LOAD_LATE   = 25;\nvar LOAD_EARLY  = 35;\nvar CUTOVER_HR  = 21;\nvar MORNING_HR  = 7;\nvar BUFFER_SIZE = 6;\n\nvar raw = msg.payload;\nvar socs = [];\nvar kwhNow = null;\nvar loadW = null;\n\nif (typeof raw === 'string') {\n    var parts = raw.split(',').map(function(v) { return parseFloat(v.trim()); });\n    if (parts.length >= 6) { socs = parts.slice(0,4); kwhNow = parts[4]; loadW = parts[5]; }\n    else if (parts.length >= 5) { socs = parts.slice(0,4); kwhNow = parts[4]; }\n    else { socs = parts; }\n} else if (Array.isArray(raw)) {\n    for (var i = 0; i < raw.length; i++) {\n        var id = raw[i].nodeid || '';\n        var val = parseFloat(raw[i].value !== undefined ? raw[i].value : raw[i].payload);\n        if (id === 'm12_kwh_total') kwhNow = val;\n        else if (id === 'm13_ptot') loadW = val;\n        else socs.push(val);\n    }\n}\n\nsocs = socs.filter(function(n) { return !isNaN(n) && n > 0 && n <= 100; });\n\n// Mock data fallback for bench testing (sensors not connected)\nif (socs.length === 0) {\n    var ms = flow.get('mock_soc');\n    if (ms !== null && ms !== undefined) { var msv = parseFloat(ms); if (!isNaN(msv)) socs = [msv,msv,msv,msv]; }\n}\nif (kwhNow === null || isNaN(kwhNow)) {\n    var mk = flow.get('mock_kwh');\n    if (mk !== null && mk !== undefined) kwhNow = parseFloat(mk);\n}\nif (loadW === null || isNaN(loadW)) {\n    var ml = flow.get('mock_load');\n    if (ml !== null && ml !== undefined) loadW = parseFloat(ml);\n}\n\nif (socs.length === 0) { node.status({fill:'grey', text:'no SOC'}); return [null, null]; }\n\nvar avg = socs.reduce(function(a,b){return a+b;},0) / socs.length;\nflow.set('last_avg_soc', avg);\nif (kwhNow !== null && !isNaN(kwhNow)) flow.set('last_kwh', kwhNow);\n\nif (loadW !== null && !isNaN(loadW) && loadW > 0) {\n    var buf = flow.get('load_buffer') || [];\n    buf.push(loadW);\n    if (buf.length > BUFFER_SIZE * 6) buf = buf.slice(-BUFFER_SIZE * 6);\n    flow.set('load_buffer', buf);\n}\n\nvar gen         = flow.get('gen_state')        || 0;\nvar eveningMode = flow.get('evening_mode')     || false;\nvar eveningDone = flow.get('evening_complete') || false;\n\nif (avg <= START_SOC) {\n    flow.set('gen_state', 1);\n    node.status({fill:'red', text:'LOW SOC ' + avg.toFixed(1) + '% - gen ON'});\n    return [{payload:1, topic:'DO01'}, null];\n}\n\nif (avg >= STOP_SOC && gen === 1 && !eveningMode) {\n    flow.set('gen_state', 0);\n    node.status({fill:'green', text:'SOC OK ' + avg.toFixed(1) + '% - gen OFF'});\n    return [{payload:0, topic:'DO01'}, null];\n}\n\nvar now = new Date();\nvar h = now.getHours();\nvar m = now.getMinutes();\nvar inWindow = (h >= 18 || h < MORNING_HR);\nvar inGrace = (Date.now() - (flow.get('boot_time') || 0)) < 90000;\n\nif (inWindow && !eveningMode && !eveningDone && gen === 0 && !inGrace) {\n    var avail = ((avg - RESERVE) / 100) * CAPACITY;\n    if (avail < 0) avail = 0;\n\n    var buf2 = flow.get('load_buffer') || [];\n    var lkw;\n    if (buf2.length >= BUFFER_SIZE) {\n        var rec = buf2.slice(-BUFFER_SIZE);\n        lkw = (rec.reduce(function(a,b){return a+b;},0) / rec.length) / 1000;\n    } else {\n        lkw = (h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY;\n    }\n\n    var hrs;\n    if (h >= CUTOVER_HR) { hrs = (24 - h - (m/60)) + MORNING_HR; }\n    else if (h < MORNING_HR) { hrs = MORNING_HR - h - (m/60); }\n    else { hrs = 0; }\n\n    var need = hrs * lkw;\n\n    if (avail < need && kwhNow !== null && !isNaN(kwhNow)) {\n        var deficit = need - avail;\n        var target = kwhNow + deficit;\n        flow.set('kwh_snapshot', kwhNow);\n        flow.set('kwh_target', target);\n        flow.set('evening_mode', true);\n        flow.set('evening_fixed_stop', false);\n        flow.set('gen_state', 1);\n        node.status({fill:'orange', text:'RECOVERY avg=' + avg.toFixed(1) + '% def=' + deficit.toFixed(0) + 'kWh tgt=' + target.toFixed(0)});\n        return [{payload:1, topic:'DO01'}, {payload:'start_poll'}];\n    }\n}\n\nnode.status({\n    fill: gen ? 'red' : 'green',\n    text: 'avg=' + avg.toFixed(1) + '% gen=' + (gen?'ON':'OFF') + (eveningMode?' [evening]':'') + (eveningDone?' [done]':'')\n});\nreturn [null, null];",
+        "func": "var START_SOC   = 17;\nvar STOP_SOC    = 19;\nvar CAPACITY    = 568;\nvar RESERVE     = 20;\nvar LOAD_LATE   = 25;\nvar LOAD_EARLY  = 35;\nvar CUTOVER_HR  = 21;\nvar MORNING_HR  = 7;\nvar BUFFER_SIZE = 6;\n\nvar raw = msg.payload;\nvar socs = [];\nvar kwhNow = null;\nvar loadW = null;\n\nif (typeof raw === 'string') {\n    var parts = raw.split(',').map(function(v) { return parseFloat(v.trim()); });\n    if (parts.length >= 6) { socs = parts.slice(0,4); kwhNow = parts[4]; loadW = parts[5]; }\n    else if (parts.length >= 5) { socs = parts.slice(0,4); kwhNow = parts[4]; }\n    else { socs = parts; }\n} else if (Array.isArray(raw)) {\n    for (var i = 0; i < raw.length; i++) {\n        var id = raw[i].nodeid || '';\n        var val = parseFloat(raw[i].value !== undefined ? raw[i].value : raw[i].payload);\n        if (id === 'm12_kwh_total') kwhNow = val;\n        else if (id === 'm13_ptot') loadW = val;\n        else socs.push(val);\n    }\n}\n\nsocs = socs.filter(function(n) { return !isNaN(n) && n > 0 && n <= 100; });\n\n// Mock data fallback for bench testing (sensors not connected)\nif (socs.length === 0) {\n    var ms = flow.get('mock_soc');\n    if (ms !== null && ms !== undefined) { var msv = parseFloat(ms); if (!isNaN(msv)) socs = [msv,msv,msv,msv]; }\n}\nif (kwhNow === null || isNaN(kwhNow)) {\n    var mk = flow.get('mock_kwh');\n    if (mk !== null && mk !== undefined) kwhNow = parseFloat(mk);\n}\nif (loadW === null || isNaN(loadW)) {\n    var ml = flow.get('mock_load');\n    if (ml !== null && ml !== undefined) loadW = parseFloat(ml);\n}\n\nif (socs.length === 0) { node.status({fill:'grey', text:'no SOC'}); return [null, null]; }\n\nvar avg = socs.reduce(function(a,b){return a+b;},0) / socs.length;\nflow.set('last_avg_soc', avg);\nif (kwhNow !== null && !isNaN(kwhNow)) flow.set('last_kwh', kwhNow);\n\nif (loadW !== null && !isNaN(loadW) && loadW > 0) {\n    var buf = flow.get('load_buffer') || [];\n    buf.push(loadW);\n    if (buf.length > BUFFER_SIZE * 6) buf = buf.slice(-BUFFER_SIZE * 6);\n    flow.set('load_buffer', buf);\n}\n\nvar gen         = flow.get('gen_state')        || 0;\nvar eveningMode = flow.get('evening_mode')     || false;\nvar eveningDone = flow.get('evening_complete') || false;\n\nif (avg <= START_SOC) {\n    flow.set('gen_state', 1);\n    flow.set('gen_start_time', Date.now());\n    node.status({fill:'red', text:'LOW SOC ' + avg.toFixed(1) + '% - gen ON'});\n    return [{payload:1, topic:'DO01'}, null];\n}\n\nif (avg >= STOP_SOC && gen === 1 && !eveningMode) {\n    flow.set('gen_state', 0);\n    flow.set('gen_start_time', null);\n    node.status({fill:'green', text:'SOC OK ' + avg.toFixed(1) + '% - gen OFF'});\n    return [{payload:0, topic:'DO01'}, null];\n}\n\nvar now = new Date();\nvar h = now.getHours();\nvar m = now.getMinutes();\nvar inWindow = (h >= 18 || h < MORNING_HR);\nvar inGrace = (Date.now() - (flow.get('boot_time') || 0)) < 90000;\n\nif (inWindow && !eveningMode && !eveningDone && gen === 0 && !inGrace) {\n    var avail = ((avg - RESERVE) / 100) * CAPACITY;\n    if (avail < 0) avail = 0;\n\n    var buf2 = flow.get('load_buffer') || [];\n    var lkw;\n    if (buf2.length >= BUFFER_SIZE) {\n        var rec = buf2.slice(-BUFFER_SIZE);\n        lkw = (rec.reduce(function(a,b){return a+b;},0) / rec.length) / 1000;\n    } else {\n        lkw = (h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY;\n    }\n\n    var hrs;\n    if (h >= CUTOVER_HR) { hrs = (24 - h - (m/60)) + MORNING_HR; }\n    else if (h < MORNING_HR) { hrs = MORNING_HR - h - (m/60); }\n    else { hrs = 0; }\n\n    var need = hrs * lkw;\n\n    if (avail < need && kwhNow !== null && !isNaN(kwhNow)) {\n        var deficit = need - avail;\n        var target = kwhNow + deficit;\n        flow.set('kwh_snapshot', kwhNow);\n        flow.set('kwh_target', target);\n        flow.set('evening_mode', true);\n        flow.set('evening_fixed_stop', false);\n        flow.set('gen_state', 1);\n        flow.set('gen_start_time', Date.now());\n        node.status({fill:'orange', text:'RECOVERY avg=' + avg.toFixed(1) + '% def=' + deficit.toFixed(0) + 'kWh tgt=' + target.toFixed(0)});\n        return [{payload:1, topic:'DO01'}, {payload:'start_poll'}];\n    }\n}\n\nnode.status({\n    fill: gen ? 'red' : 'green',\n    text: 'avg=' + avg.toFixed(1) + '% gen=' + (gen?'ON':'OFF') + (eveningMode?' [evening]':'') + (eveningDone?' [done]':'')\n});\nreturn [null, null];",
         "outputs": 2,
         "noerr": 0,
         "initialize": "flow.set('boot_time', Date.now());",
@@ -161,7 +161,7 @@
         "type": "function",
         "z": "gen_tab",
         "name": "SOC check: start gen if needed",
-        "func": "// Guards\nif ((Date.now() - (flow.get('boot_time') || 0)) < 90000) {\n    node.status({fill:'grey', text:'startup grace period'});\n    return [null, {payload:{decision:'grace period'}}];\n}\nif (flow.get('gen_state') === 1) {\n    node.status({fill:'grey', text:'gen already on'});\n    return [null, {payload:{decision:'gen already on'}}];\n}\n\nvar avg = flow.get('last_avg_soc');\nif (avg === null || avg === undefined) {\n    node.status({fill:'grey', text:'no SOC data'});\n    return [null, {payload:{decision:'no SOC data'}}];\n}\n\nvar now = new Date();\nvar h = now.getHours();\nvar m = now.getMinutes();\nvar mockH = flow.get('mock_hour');\nif (mockH !== null && mockH !== undefined) h = parseInt(mockH);\n\nvar threshold = (h < 15) ? 50 : (h < 16) ? 60 : 90;\n\nvar CAPACITY      = 568;\nvar RESERVE       = 20;\nvar LOAD_LATE     = 25;\nvar LOAD_EARLY    = 35;\nvar CUTOVER_HR    = 21;\nvar MORNING_HR    = 5;\nvar OFFPEAK_FACTOR = 0.5;\n\nvar avail = ((avg - RESERVE) / 100) * CAPACITY;\nif (avail < 0) avail = 0;\n\nvar peakCaptured = flow.get('peak_captured') || false;\nvar peakLkw = flow.get('peak_load_kw') || null;\nvar lkwEst = (peakCaptured && peakLkw) ? peakLkw * OFFPEAK_FACTOR : ((h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY);\n\nvar hrs;\nif (h >= CUTOVER_HR)      { hrs = (24 - h - (m/60)) + MORNING_HR; }\nelse if (h < MORNING_HR)  { hrs = MORNING_HR - h - (m/60); }\nelse                      { hrs = (24 - h - (m/60)) + MORNING_HR; }\n\nvar need = hrs * lkwEst;\nvar surplus = avail - need;\n\nvar dbg = {\n    soc:        parseFloat(avg.toFixed(1)),\n    threshold:  threshold,\n    avail_kwh:  parseFloat(avail.toFixed(0)),\n    need_kwh:   parseFloat(need.toFixed(0)),\n    surplus_kwh: parseFloat(surplus.toFixed(0)),\n    model:      peakCaptured ? ('peak ' + (peakLkw||0).toFixed(1) + 'kW') : 'flat'\n};\n\nif (avg >= threshold) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% >= ' + threshold + '% | avail=' + avail.toFixed(0) + ' need=' + need.toFixed(0) + 'kWh'});\n    dbg.decision = 'SOC OK';\n    return [null, {payload: dbg}];\n}\n\nif (surplus >= 0) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% < ' + threshold + '% but surplus=' + surplus.toFixed(0) + 'kWh'});\n    dbg.decision = 'battery sufficient';\n    return [null, {payload: dbg}];\n}\n\n// Start generator\nflow.set('gen_state', 1);\nflow.set('evening_mode', true);\nflow.set('evening_fixed_stop', false);\nflow.set('evening_complete', false);\nflow.set('start_soc', avg);\nvar kwhNow = flow.get('last_kwh') || 0;\nflow.set('kwh_snapshot', kwhNow);\n\nnode.status({fill:'orange', text:'SOC ' + avg.toFixed(1) + '% deficit=' + (-surplus).toFixed(0) + 'kWh - gen ON'});\ndbg.decision = 'gen START - deficit ' + (-surplus).toFixed(0) + 'kWh';\nreturn [{payload: 1, topic: 'DO01'}, {payload: dbg}];",
+        "func": "// Guards\nif ((Date.now() - (flow.get('boot_time') || 0)) < 90000) {\n    node.status({fill:'grey', text:'startup grace period'});\n    return [null, {payload:{decision:'grace period'}}];\n}\nif (flow.get('gen_state') === 1) {\n    node.status({fill:'grey', text:'gen already on'});\n    return [null, {payload:{decision:'gen already on'}}];\n}\n\nvar avg = flow.get('last_avg_soc');\nif (avg === null || avg === undefined) {\n    node.status({fill:'grey', text:'no SOC data'});\n    return [null, {payload:{decision:'no SOC data'}}];\n}\n\nvar now = new Date();\nvar h = now.getHours();\nvar m = now.getMinutes();\nvar mockH = flow.get('mock_hour');\nif (mockH !== null && mockH !== undefined) h = parseInt(mockH);\n\nvar threshold = (h < 15) ? 50 : (h < 16) ? 60 : 90;\n\nvar CAPACITY      = 568;\nvar RESERVE       = 20;\nvar LOAD_LATE     = 25;\nvar LOAD_EARLY    = 35;\nvar CUTOVER_HR    = 21;\nvar MORNING_HR    = 5;\nvar OFFPEAK_FACTOR = 0.5;\n\nvar avail = ((avg - RESERVE) / 100) * CAPACITY;\nif (avail < 0) avail = 0;\n\nvar peakCaptured = flow.get('peak_captured') || false;\nvar peakLkw = flow.get('peak_load_kw') || null;\nvar lkwEst = (peakCaptured && peakLkw) ? peakLkw * OFFPEAK_FACTOR : ((h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY);\n\nvar hrs;\nif (h >= CUTOVER_HR)      { hrs = (24 - h - (m/60)) + MORNING_HR; }\nelse if (h < MORNING_HR)  { hrs = MORNING_HR - h - (m/60); }\nelse                      { hrs = (24 - h - (m/60)) + MORNING_HR; }\n\nvar need = hrs * lkwEst;\nvar surplus = avail - need;\n\nvar dbg = {\n    soc:        parseFloat(avg.toFixed(1)),\n    threshold:  threshold,\n    avail_kwh:  parseFloat(avail.toFixed(0)),\n    need_kwh:   parseFloat(need.toFixed(0)),\n    surplus_kwh: parseFloat(surplus.toFixed(0)),\n    model:      peakCaptured ? ('peak ' + (peakLkw||0).toFixed(1) + 'kW') : 'flat'\n};\n\nif (avg >= threshold) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% >= ' + threshold + '% | avail=' + avail.toFixed(0) + ' need=' + need.toFixed(0) + 'kWh'});\n    dbg.decision = 'SOC OK';\n    return [null, {payload: dbg}];\n}\n\nif (surplus >= 0) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% < ' + threshold + '% but surplus=' + surplus.toFixed(0) + 'kWh'});\n    dbg.decision = 'battery sufficient';\n    return [null, {payload: dbg}];\n}\n\n// Start generator\nflow.set('gen_state', 1);\nflow.set('evening_mode', true);\nflow.set('evening_fixed_stop', false);\nflow.set('evening_complete', false);\nflow.set('start_soc', avg);\nvar kwhNow = flow.get('last_kwh') || 0;\nflow.set('kwh_snapshot', kwhNow);\nflow.set('gen_start_time', Date.now());\n\nnode.status({fill:'orange', text:'SOC ' + avg.toFixed(1) + '% deficit=' + (-surplus).toFixed(0) + 'kWh - gen ON'});\ndbg.decision = 'gen START - deficit ' + (-surplus).toFixed(0) + 'kWh';\nreturn [{payload: 1, topic: 'DO01'}, {payload: dbg}];",
         "outputs": 2,
         "noerr": 0,
         "initialize": "",
@@ -334,7 +334,7 @@
         "type": "function",
         "z": "gen_tab",
         "name": "kWh target stop (two-period model)",
-        "func": "var MAX_FAIL      = 3;\nvar BUFFER_SIZE   = 6;\nvar LOAD_LATE     = 25;\nvar LOAD_EARLY    = 35;\nvar OFFPEAK_FACTOR = 0.5;  // off-peak load as fraction of 7pm peak (tune this: 0.4=lower, 0.6=higher)\nvar CUTOVER_HR    = 21;\nvar MORNING_HR    = 5;\n\nvar eveningMode = flow.get('evening_mode') || false;\nif (!eveningMode) { node.status({fill:'grey', text:'idle'}); return null; }\n\nvar now = new Date();\nvar h = now.getHours();\nvar m = now.getMinutes();\n\nvar raw = msg.payload;\nvar kwhNow = null;\nvar loadW = null;\n\nif (typeof raw === 'string') {\n    var parts = raw.split(',').map(function(v){return parseFloat(v.trim());});\n    kwhNow = parts[0]; loadW = parts[1];\n} else if (Array.isArray(raw)) {\n    for (var i = 0; i < raw.length; i++) {\n        var id = raw[i].nodeid || '';\n        var val = parseFloat(raw[i].value !== undefined ? raw[i].value : raw[i].payload);\n        if (id === 'm12_kwh_total') kwhNow = val;\n        else if (id === 'm13_ptot') loadW = val;\n    }\n} else if (raw && typeof raw === 'object') {\n    kwhNow = parseFloat(raw['m12_kwh_total']);\n    loadW  = parseFloat(raw['m13_ptot']);\n}\n\n// Mock data fallback for bench testing (sensors not connected)\nif (kwhNow === null || isNaN(kwhNow)) {\n    var mk = flow.get('mock_kwh');\n    if (mk !== null && mk !== undefined) kwhNow = parseFloat(mk);\n}\nif (loadW === null || isNaN(loadW)) {\n    var ml = flow.get('mock_load');\n    if (ml !== null && ml !== undefined) loadW = parseFloat(ml);\n}\n\nvar failCount = context.get('fail_count') || 0;\nif (kwhNow === null || isNaN(kwhNow)) {\n    failCount++;\n    context.set('fail_count', failCount);\n    node.status({fill:'yellow', text:'bad read ' + failCount + '/' + MAX_FAIL});\n    if (failCount < MAX_FAIL) return [null, {payload:'retry'}, null];\n    return null;\n}\ncontext.set('fail_count', 0);\n\n// Update rolling load buffer from m13\nif (loadW !== null && !isNaN(loadW) && loadW > 0) {\n    var buf = flow.get('load_buffer') || [];\n    buf.push(loadW);\n    if (buf.length > BUFFER_SIZE) buf = buf.slice(-BUFFER_SIZE);\n    flow.set('load_buffer', buf);\n}\n\n// Rolling average load (m13)\nvar buf2 = flow.get('load_buffer') || [];\nvar lkw;\nif (buf2.length >= BUFFER_SIZE) {\n    lkw = (buf2.reduce(function(a,b){return a+b;},0) / buf2.length) / 1000;\n} else {\n    lkw = (h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY;\n}\n\n// Two-period need calculation\nvar peakCaptured = flow.get('peak_captured') || false;\nvar peakLkw      = flow.get('peak_load_kw')  || null;\nvar need;\nvar modelLabel;\n\nif (peakCaptured && peakLkw) {\n    var offpeakLkw = peakLkw * OFFPEAK_FACTOR;\n    var peakHrs, offpeakHrs;\n    if (h < CUTOVER_HR) {\n        peakHrs    = CUTOVER_HR - h - (m/60);\n        offpeakHrs = 8;\n    } else {\n        peakHrs    = 0;\n        offpeakHrs = (h >= CUTOVER_HR) ? (24 - h - (m/60) + MORNING_HR) : (MORNING_HR - h - (m/60));\n    }\n    need = (peakHrs * peakLkw) + (offpeakHrs * offpeakLkw);\n    modelLabel = '2p peak=' + peakLkw.toFixed(1) + 'kW off=' + offpeakLkw.toFixed(1) + 'kW';\n} else {\n    var hrs;\n    if (h < MORNING_HR) { hrs = MORNING_HR - h - (m/60); }\n    else                { hrs = (24 - h - (m/60)) + MORNING_HR; }\n    need = hrs * lkw;\n    modelLabel = 'flat ' + lkw.toFixed(1) + 'kW';\n}\n\nvar avg = flow.get('last_avg_soc') || 0;\nvar avail = ((avg - 20) / 100) * 568;\nif (avail < 0) avail = 0;\n\nvar startSoc = flow.get('start_soc') || 0;\n\n// Stop early if battery has recovered +10%\nif (startSoc > 0 && avg >= startSoc + 10) {\n    flow.set('evening_mode', false);\n    flow.set('evening_complete', false);\n    flow.set('gen_state', 0);\n    node.status({fill:'green', text:'SOC +10% recovery - gen OFF'});\n    return [{payload:0, topic:'DO01'}, null, {payload:{\n        decision:   'SOC +10% recovery stop',\n        soc:        parseFloat(avg.toFixed(1)),\n        start_soc:  parseFloat(startSoc.toFixed(1)),\n        model:      modelLabel,\n        avail_kwh:  parseFloat(avail.toFixed(0)),\n        need_kwh:   parseFloat(need.toFixed(0))\n    }}];\n}\n\nvar deficit = need - avail;\nif (deficit < 0) deficit = 0;\nvar snapshot = flow.get('kwh_snapshot') || kwhNow;\nvar target   = snapshot + deficit;\nflow.set('kwh_target', target);\n\nvar progress = kwhNow - snapshot;\n\nvar dbg = {\n    model:        modelLabel,\n    load_kw:      parseFloat(lkw.toFixed(1)),\n    soc:          parseFloat(avg.toFixed(1)),\n    avail_kwh:    parseFloat(avail.toFixed(0)),\n    need_kwh:     parseFloat(need.toFixed(0)),\n    deficit_kwh:  parseFloat(deficit.toFixed(0)),\n    progress_kwh: parseFloat(progress.toFixed(1)),\n    target_kwh:   parseFloat(target.toFixed(0)),\n    current_kwh:  parseFloat(kwhNow.toFixed(0))\n};\n\nnode.status({fill:'blue', text:'[' + modelLabel + '] need=' + need.toFixed(0) + ' avail=' + avail.toFixed(0) + ' prog=' + progress.toFixed(0) + '/' + deficit.toFixed(0) + 'kWh'});\n\nif (kwhNow >= target) {\n    flow.set('evening_mode', false);\n    flow.set('evening_complete', true);\n    flow.set('gen_state', 0);\n    node.status({fill:'green', text:'target reached ' + kwhNow.toFixed(0) + '/' + target.toFixed(0) + ' - gen OFF'});\n    dbg.decision = 'target reached - gen OFF';\n    return [{payload:0, topic:'DO01'}, null, {payload: dbg}];\n}\n\ndbg.decision = 'running';\nreturn [null, {payload:'continue'}, {payload: dbg}];",
+        "func": "var MAX_FAIL      = 3;\nvar BUFFER_SIZE   = 6;\nvar LOAD_LATE     = 25;\nvar LOAD_EARLY    = 35;\nvar OFFPEAK_FACTOR = 0.5;  // off-peak load as fraction of 7pm peak (tune this: 0.4=lower, 0.6=higher)\nvar CUTOVER_HR    = 21;\nvar MORNING_HR    = 5;\n\nvar eveningMode = flow.get('evening_mode') || false;\nif (!eveningMode) { node.status({fill:'grey', text:'idle'}); return null; }\n\nvar now = new Date();\nvar h = now.getHours();\nvar m = now.getMinutes();\n\nvar raw = msg.payload;\nvar kwhNow = null;\nvar loadW = null;\n\nif (typeof raw === 'string') {\n    var parts = raw.split(',').map(function(v){return parseFloat(v.trim());});\n    kwhNow = parts[0]; loadW = parts[1];\n} else if (Array.isArray(raw)) {\n    for (var i = 0; i < raw.length; i++) {\n        var id = raw[i].nodeid || '';\n        var val = parseFloat(raw[i].value !== undefined ? raw[i].value : raw[i].payload);\n        if (id === 'm12_kwh_total') kwhNow = val;\n        else if (id === 'm13_ptot') loadW = val;\n    }\n} else if (raw && typeof raw === 'object') {\n    kwhNow = parseFloat(raw['m12_kwh_total']);\n    loadW  = parseFloat(raw['m13_ptot']);\n}\n\n// Mock data fallback for bench testing (sensors not connected)\nif (kwhNow === null || isNaN(kwhNow)) {\n    var mk = flow.get('mock_kwh');\n    if (mk !== null && mk !== undefined) kwhNow = parseFloat(mk);\n}\nif (loadW === null || isNaN(loadW)) {\n    var ml = flow.get('mock_load');\n    if (ml !== null && ml !== undefined) loadW = parseFloat(ml);\n}\n\nvar failCount = context.get('fail_count') || 0;\nif (kwhNow === null || isNaN(kwhNow)) {\n    failCount++;\n    context.set('fail_count', failCount);\n    node.status({fill:'yellow', text:'bad read ' + failCount + '/' + MAX_FAIL});\n    if (failCount < MAX_FAIL) return [null, {payload:'retry'}, null];\n    return null;\n}\ncontext.set('fail_count', 0);\n\n// Update rolling load buffer from m13\nif (loadW !== null && !isNaN(loadW) && loadW > 0) {\n    var buf = flow.get('load_buffer') || [];\n    buf.push(loadW);\n    if (buf.length > BUFFER_SIZE) buf = buf.slice(-BUFFER_SIZE);\n    flow.set('load_buffer', buf);\n}\n\n// Rolling average load (m13)\nvar buf2 = flow.get('load_buffer') || [];\nvar lkw;\nif (buf2.length >= BUFFER_SIZE) {\n    lkw = (buf2.reduce(function(a,b){return a+b;},0) / buf2.length) / 1000;\n} else {\n    lkw = (h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY;\n}\n\n// Two-period need calculation\nvar peakCaptured = flow.get('peak_captured') || false;\nvar peakLkw      = flow.get('peak_load_kw')  || null;\nvar need;\nvar modelLabel;\n\nif (peakCaptured && peakLkw) {\n    var offpeakLkw = peakLkw * OFFPEAK_FACTOR;\n    var peakHrs, offpeakHrs;\n    if (h < CUTOVER_HR) {\n        peakHrs    = CUTOVER_HR - h - (m/60);\n        offpeakHrs = 8;\n    } else {\n        peakHrs    = 0;\n        offpeakHrs = (h >= CUTOVER_HR) ? (24 - h - (m/60) + MORNING_HR) : (MORNING_HR - h - (m/60));\n    }\n    need = (peakHrs * peakLkw) + (offpeakHrs * offpeakLkw);\n    modelLabel = '2p peak=' + peakLkw.toFixed(1) + 'kW off=' + offpeakLkw.toFixed(1) + 'kW';\n} else {\n    var hrs;\n    if (h < MORNING_HR) { hrs = MORNING_HR - h - (m/60); }\n    else                { hrs = (24 - h - (m/60)) + MORNING_HR; }\n    need = hrs * lkw;\n    modelLabel = 'flat ' + lkw.toFixed(1) + 'kW';\n}\n\nvar avg = flow.get('last_avg_soc') || 0;\nvar avail = ((avg - 20) / 100) * 568;\nif (avail < 0) avail = 0;\n\nvar startSoc = flow.get('start_soc') || 0;\n\n// Stop early if battery has recovered +10%\nif (startSoc > 0 && avg >= startSoc + 10) {\n    flow.set('evening_mode', false);\n    flow.set('evening_complete', false);\n    flow.set('gen_state', 0);\n    flow.set('gen_start_time', null);\n    node.status({fill:'green', text:'SOC +10% recovery - gen OFF'});\n    return [{payload:0, topic:'DO01'}, null, {payload:{\n        decision:   'SOC +10% recovery stop',\n        soc:        parseFloat(avg.toFixed(1)),\n        start_soc:  parseFloat(startSoc.toFixed(1)),\n        model:      modelLabel,\n        avail_kwh:  parseFloat(avail.toFixed(0)),\n        need_kwh:   parseFloat(need.toFixed(0))\n    }}];\n}\n\nvar deficit = need - avail;\nif (deficit < 0) deficit = 0;\nvar snapshot = flow.get('kwh_snapshot') || kwhNow;\nvar target   = snapshot + deficit;\nflow.set('kwh_target', target);\n\nvar progress = kwhNow - snapshot;\n\nvar dbg = {\n    model:        modelLabel,\n    load_kw:      parseFloat(lkw.toFixed(1)),\n    soc:          parseFloat(avg.toFixed(1)),\n    avail_kwh:    parseFloat(avail.toFixed(0)),\n    need_kwh:     parseFloat(need.toFixed(0)),\n    deficit_kwh:  parseFloat(deficit.toFixed(0)),\n    progress_kwh: parseFloat(progress.toFixed(1)),\n    target_kwh:   parseFloat(target.toFixed(0)),\n    current_kwh:  parseFloat(kwhNow.toFixed(0))\n};\n\nnode.status({fill:'blue', text:'[' + modelLabel + '] need=' + need.toFixed(0) + ' avail=' + avail.toFixed(0) + ' prog=' + progress.toFixed(0) + '/' + deficit.toFixed(0) + 'kWh'});\n\nif (kwhNow >= target) {\n    flow.set('evening_mode', false);\n    flow.set('evening_complete', true);\n    flow.set('gen_state', 0);\n    flow.set('gen_start_time', null);\n    node.status({fill:'green', text:'target reached ' + kwhNow.toFixed(0) + '/' + target.toFixed(0) + ' - gen OFF'});\n    dbg.decision = 'target reached - gen OFF';\n    return [{payload:0, topic:'DO01'}, null, {payload: dbg}];\n}\n\ndbg.decision = 'running';\nreturn [null, {payload:'continue'}, {payload: dbg}];",
         "outputs": 3,
         "noerr": 0,
         "initialize": "",
@@ -450,9 +450,9 @@
         "collapse": false
     },
     {
-        "id": "d2_grp_gen",
+        "id": "d2_grp_bat_indiv",
         "type": "ui_group",
-        "name": "Generator",
+        "name": "Battery Detail",
         "tab": "d2_tab",
         "order": 2,
         "disp": true,
@@ -460,11 +460,31 @@
         "collapse": false
     },
     {
+        "id": "d2_grp_gen",
+        "type": "ui_group",
+        "name": "Generator",
+        "tab": "d2_tab",
+        "order": 3,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "d2_grp_chart",
+        "type": "ui_group",
+        "name": "Site Load",
+        "tab": "d2_tab",
+        "order": 4,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
         "id": "d2_grp_plan",
         "type": "ui_group",
         "name": "Overnight Target",
         "tab": "d2_tab",
-        "order": 3,
+        "order": 5,
         "disp": true,
         "width": "6",
         "collapse": false
@@ -474,7 +494,7 @@
         "type": "ui_group",
         "name": "SOC Check",
         "tab": "d2_tab",
-        "order": 4,
+        "order": 6,
         "disp": true,
         "width": "6",
         "collapse": false
@@ -484,8 +504,8 @@
         "type": "function",
         "z": "dash_tab",
         "name": "format for dashboard",
-        "func": "var raw = msg.payload;\nif (typeof raw !== 'string') return null;\nvar parts = raw.split(',').map(function(v){return parseFloat(v.trim());});\nif (parts.length < 4) return null;\n\nvar socs = parts.slice(0,4).filter(function(n){return !isNaN(n) && n > 0 && n <= 100;});\nif (socs.length === 0) return null;\n\nvar avg = parseFloat((socs.reduce(function(a,b){return a+b;},0) / socs.length).toFixed(1));\nvar loadW = (parts.length >= 6 && !isNaN(parts[5])) ? parts[5] : null;\nvar genState = flow.get('gen_state') || 0;\nvar loadKw = (loadW !== null) ? (loadW / 1000).toFixed(1) : '--';\n\nreturn [\n    {payload: avg},\n    {payload: loadKw + ' kW'},\n    {payload: genState ? 'RUNNING' : 'STANDBY'}\n];",
-        "outputs": 3,
+        "func": "var raw = msg.payload;\nif (typeof raw !== 'string') return null;\nvar parts = raw.split(',').map(function(v){return parseFloat(v.trim());});\nif (parts.length < 4) return null;\n\nvar socs = parts.slice(0,4).filter(function(n){return !isNaN(n) && n > 0 && n <= 100;});\nif (socs.length === 0) return null;\n\nvar avg = parseFloat((socs.reduce(function(a,b){return a+b;},0) / socs.length).toFixed(1));\nvar loadW = (parts.length >= 6 && !isNaN(parts[5])) ? parts[5] : null;\nvar loadKw = (loadW !== null) ? (loadW / 1000).toFixed(1) : '--';\nvar loadKwNum = (loadW !== null) ? parseFloat((loadW / 1000).toFixed(1)) : null;\nvar genState = flow.get('gen_state') || 0;\n\nvar lastKwh = (parts.length >= 5 && !isNaN(parts[4])) ? parts[4] : (flow.get('last_kwh') || 0);\nvar dailyStart = flow.get('daily_kwh_start', 'file');\nif (dailyStart === null || dailyStart === undefined) {\n    flow.set('daily_kwh_start', lastKwh, 'file');\n    dailyStart = lastKwh;\n}\nvar dailyKwh = Math.max(lastKwh - dailyStart, 0).toFixed(1);\n\nvar genStartTime = flow.get('gen_start_time');\nvar elapsedStr = '\\u2014';\nvar estRemStr = '\\u2014';\nif (genState && genStartTime) {\n    var elapsedHrs = (Date.now() - genStartTime) / 3600000;\n    var hh = Math.floor(elapsedHrs);\n    var mm = Math.floor((elapsedHrs - hh) * 60);\n    elapsedStr = hh + 'h ' + mm + 'm';\n    var snapshot = flow.get('kwh_snapshot') || lastKwh;\n    var target = flow.get('kwh_target') || lastKwh;\n    var produced = lastKwh - snapshot;\n    var remaining = Math.max(target - lastKwh, 0);\n    var rate = elapsedHrs > 0.05 ? produced / elapsedHrs : 0;\n    if (rate > 1 && remaining > 0) {\n        var estHrs = remaining / rate;\n        var eh = Math.floor(estHrs);\n        var em = Math.floor((estHrs - eh) * 60);\n        estRemStr = '~' + eh + 'h ' + em + 'm';\n    } else if (remaining === 0) {\n        estRemStr = 'Target met';\n    }\n}\n\nvar peakKw = flow.get('peak_load_kw');\nvar peakStr = peakKw ? peakKw.toFixed(1) + ' kW' : '--';\n\nvar soc1 = (!isNaN(parts[0]) && parts[0] > 0) ? Math.round(parts[0]) : 0;\nvar soc2 = (!isNaN(parts[1]) && parts[1] > 0) ? Math.round(parts[1]) : 0;\nvar soc3 = (!isNaN(parts[2]) && parts[2] > 0) ? Math.round(parts[2]) : 0;\nvar soc4 = (!isNaN(parts[3]) && parts[3] > 0) ? Math.round(parts[3]) : 0;\n\nreturn [\n    {payload: avg},\n    {payload: loadKw + ' kW'},\n    {payload: {state: genState ? 'RUNNING' : 'STANDBY', load_kw: loadKw, elapsed: elapsedStr, daily_kwh: dailyKwh, est_remaining: estRemStr, peak_kw: peakStr}},\n    loadKwNum !== null ? {payload: loadKwNum, topic: 'Site Load (kW)'} : null,\n    {payload: {soc1: soc1, soc2: soc2, soc3: soc3, soc4: soc4}}\n];",
+        "outputs": 5,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
@@ -493,15 +513,11 @@
         "x": 200,
         "y": 100,
         "wires": [
-            [
-                "d2_soc_gauge"
-            ],
-            [
-                "d2_load_text"
-            ],
-            [
-                "d2_gen_state"
-            ]
+            ["d2_soc_gauge"],
+            ["d2_load_text"],
+            ["d2_gen_tmpl"],
+            ["d2_load_chart"],
+            ["d2_soc_indiv"]
         ]
     },
     {
@@ -536,7 +552,7 @@
         "z": "dash_tab",
         "name": "Site Load",
         "group": "d2_grp_gen",
-        "order": 2,
+        "order": 98,
         "width": 0,
         "height": 0,
         "label": "Site Load",
@@ -552,7 +568,7 @@
         "z": "dash_tab",
         "name": "Generator State",
         "group": "d2_grp_gen",
-        "order": 1,
+        "order": 99,
         "width": 0,
         "height": 0,
         "label": "Generator",
@@ -601,5 +617,101 @@
         "wires": [
             []
         ]
+    },
+    {
+        "id": "tick_midnight",
+        "type": "inject",
+        "z": "gen_tab",
+        "name": "midnight daily kWh reset",
+        "props": [{"p": "payload"}],
+        "repeat": "",
+        "crontab": "0 0 * * *",
+        "once": false,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 860,
+        "wires": [["logic_midnight"]]
+    },
+    {
+        "id": "logic_midnight",
+        "type": "function",
+        "z": "gen_tab",
+        "name": "set daily kWh start",
+        "func": "var lastKwh = flow.get('last_kwh') || 0;\nflow.set('daily_kwh_start', lastKwh, 'file');\nnode.status({fill:'blue', text:'midnight: daily start=' + lastKwh.toFixed(1) + ' kWh'});\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 860,
+        "wires": [[]]
+    },
+    {
+        "id": "d2_gen_tmpl",
+        "type": "ui_template",
+        "z": "dash_tab",
+        "name": "Generator Panel",
+        "group": "d2_grp_gen",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "format": "<div ng-if=\"msg.payload\" style=\"padding:12px;font-family:sans-serif;font-size:13px\"><table style=\"width:100%;border-collapse:collapse\"><tr><td style=\"padding:5px 14px 5px 0;color:#9e9e9e\">Generator</td><td style=\"padding:5px;font-weight:bold;font-size:15px\" ng-style=\"{color:msg.payload.state==='RUNNING'?'#e53935':'#43a047'}\">{{msg.payload.state}}</td></tr><tr><td style=\"padding:5px 14px 5px 0;color:#9e9e9e\">Site Load</td><td style=\"padding:5px\">{{msg.payload.load_kw}} kW</td></tr><tr><td style=\"padding:5px 14px 5px 0;color:#9e9e9e\">Running for</td><td style=\"padding:5px\">{{msg.payload.elapsed}}</td></tr><tr><td style=\"padding:5px 14px 5px 0;color:#9e9e9e\">Today's gen</td><td style=\"padding:5px\">{{msg.payload.daily_kwh}} kWh</td></tr><tr><td style=\"padding:5px 14px 5px 0;color:#9e9e9e\">Est. remaining</td><td style=\"padding:5px\">{{msg.payload.est_remaining}}</td></tr><tr><td style=\"padding:5px 14px 5px 0;color:#9e9e9e\">Peak today</td><td style=\"padding:5px\">{{msg.payload.peak_kw}}</td></tr></table></div><div ng-if=\"!msg.payload\" style=\"padding:12px;color:#9e9e9e;font-family:sans-serif\">Awaiting data...</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 420,
+        "y": 380,
+        "wires": [[]]
+    },
+    {
+        "id": "d2_soc_indiv",
+        "type": "ui_template",
+        "z": "dash_tab",
+        "name": "Individual SOC Bars",
+        "group": "d2_grp_bat_indiv",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "format": "<div ng-if=\"msg.payload\" style=\"padding:10px;font-family:sans-serif;font-size:13px\"><div style=\"margin-bottom:9px\"><div style=\"display:flex;justify-content:space-between;margin-bottom:3px\"><span>Inv 1A</span><b>{{msg.payload.soc1}}%</b></div><div style=\"background:#e0e0e0;border-radius:4px;height:14px;overflow:hidden\"><div ng-style=\"{width:msg.payload.soc1+'%',background:msg.payload.soc1<20?'#c62828':msg.payload.soc1<50?'#f57c00':msg.payload.soc1<80?'#f9a825':'#2e7d32',height:'14px'}\"></div></div></div><div style=\"margin-bottom:9px\"><div style=\"display:flex;justify-content:space-between;margin-bottom:3px\"><span>Inv 1B</span><b>{{msg.payload.soc2}}%</b></div><div style=\"background:#e0e0e0;border-radius:4px;height:14px;overflow:hidden\"><div ng-style=\"{width:msg.payload.soc2+'%',background:msg.payload.soc2<20?'#c62828':msg.payload.soc2<50?'#f57c00':msg.payload.soc2<80?'#f9a825':'#2e7d32',height:'14px'}\"></div></div></div><div style=\"margin-bottom:9px\"><div style=\"display:flex;justify-content:space-between;margin-bottom:3px\"><span>Inv 2</span><b>{{msg.payload.soc3}}%</b></div><div style=\"background:#e0e0e0;border-radius:4px;height:14px;overflow:hidden\"><div ng-style=\"{width:msg.payload.soc3+'%',background:msg.payload.soc3<20?'#c62828':msg.payload.soc3<50?'#f57c00':msg.payload.soc3<80?'#f9a825':'#2e7d32',height:'14px'}\"></div></div></div><div><div style=\"display:flex;justify-content:space-between;margin-bottom:3px\"><span>Inv 3</span><b>{{msg.payload.soc4}}%</b></div><div style=\"background:#e0e0e0;border-radius:4px;height:14px;overflow:hidden\"><div ng-style=\"{width:msg.payload.soc4+'%',background:msg.payload.soc4<20?'#c62828':msg.payload.soc4<50?'#f57c00':msg.payload.soc4<80?'#f9a825':'#2e7d32',height:'14px'}\"></div></div></div></div><div ng-if=\"!msg.payload\" style=\"padding:12px;color:#9e9e9e;font-family:sans-serif\">No SOC data</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 420,
+        "y": 440,
+        "wires": [[]]
+    },
+    {
+        "id": "d2_load_chart",
+        "type": "ui_chart",
+        "z": "dash_tab",
+        "name": "Site Load Chart",
+        "group": "d2_grp_chart",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "label": "Site Load (kW)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "colors": ["#1565c0","#aec6cf","#ff7f0e","#2ca02c","#98df8a","#d62728","#ff9896","#9467bd","#c5b0d5"],
+        "useOldColors": false,
+        "x": 420,
+        "y": 500,
+        "wires": [[]]
     }
 ]
