@@ -120,7 +120,7 @@
         "type": "function",
         "z": "gen_tab",
         "name": "SOC check: start gen if needed",
-        "func": "// Daily reset on first tick at/after 3pm\nvar today = new Date().toDateString();\nif (flow.get('last_reset_date') !== today) {\n    flow.set('last_reset_date', today);\n    flow.set('evening_complete', false);\n    flow.set('evening_fixed_stop', false);\n    flow.set('peak_captured', false);\n    flow.set('peak_load_kw', null);\n    flow.set('peak_buffer', []);\n    node.warn('Daily state reset');\n}\n\n// Guards\nif ((Date.now() - (flow.get('boot_time') || 0)) < 90000) {\n    node.status({fill:'grey', text:'startup grace period'});\n    return null;\n}\nif (flow.get('gen_state') === 1) {\n    node.status({fill:'grey', text:'gen already on'});\n    return null;\n}\n\nvar avg = flow.get('last_avg_soc');\nif (avg === null || avg === undefined) {\n    node.status({fill:'grey', text:'no SOC data'});\n    return null;\n}\n\nvar h = new Date().getHours();\nvar mockH = flow.get('mock_hour');\nif (mockH !== null && mockH !== undefined) h = parseInt(mockH);\n\n// Simple threshold: 2pm-3pm = 50%, 3pm-4pm = 60%, 4pm onwards = 90%\nvar threshold = (h < 15) ? 50 : (h < 16) ? 60 : 90;\nif (avg >= threshold) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% >= ' + threshold + '% - OK'});\n    return null;\n}\n\n// SOC is below threshold - start generator\nflow.set('gen_state', 1);\nflow.set('evening_mode', true);\nflow.set('evening_fixed_stop', false);\nflow.set('evening_complete', false);\nflow.set('start_soc', avg);\nvar kwhNow = flow.get('last_kwh') || 0;\nflow.set('kwh_snapshot', kwhNow);\n\nnode.status({fill:'orange', text:'SOC ' + avg.toFixed(1) + '% < ' + threshold + '% - gen ON'});\nreturn {payload: 1, topic: 'DO01'};",
+        "func": "// Guards\nif ((Date.now() - (flow.get('boot_time') || 0)) < 90000) {\n    node.status({fill:'grey', text:'startup grace period'});\n    return null;\n}\nif (flow.get('gen_state') === 1) {\n    node.status({fill:'grey', text:'gen already on'});\n    return null;\n}\n\nvar avg = flow.get('last_avg_soc');\nif (avg === null || avg === undefined) {\n    node.status({fill:'grey', text:'no SOC data'});\n    return null;\n}\n\nvar h = new Date().getHours();\nvar mockH = flow.get('mock_hour');\nif (mockH !== null && mockH !== undefined) h = parseInt(mockH);\n\n// Simple threshold: 2pm-3pm = 50%, 3pm-4pm = 60%, 4pm onwards = 90%\nvar threshold = (h < 15) ? 50 : (h < 16) ? 60 : 90;\nif (avg >= threshold) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% >= ' + threshold + '% - OK'});\n    return null;\n}\n\n// Deficit pre-check: don't start gen if battery already covers the night\nvar CAPACITY = 568;\nvar RESERVE  = 20;\nvar LOAD_LATE  = 25;\nvar LOAD_EARLY = 35;\nvar CUTOVER_HR = 21;\nvar MORNING_HR = 5;\nvar avail = ((avg - RESERVE) / 100) * CAPACITY;\nif (avail < 0) avail = 0;\nvar m = new Date().getMinutes();\nvar peakCaptured = flow.get('peak_captured') || false;\nvar peakLkw      = flow.get('peak_load_kw')  || null;\nvar OFFPEAK_FACTOR = 0.5;\nvar lkwEst = (peakCaptured && peakLkw) ? peakLkw * OFFPEAK_FACTOR : ((h >= CUTOVER_HR || h < MORNING_HR) ? LOAD_LATE : LOAD_EARLY);\nvar hrs;\nif (h >= CUTOVER_HR) { hrs = (24 - h - (m/60)) + MORNING_HR; }\nelse if (h < MORNING_HR) { hrs = MORNING_HR - h - (m/60); }\nelse { hrs = (24 - h - (m/60)) + MORNING_HR; }\nvar need = hrs * lkwEst;\nif (avail >= need) {\n    node.status({fill:'green', text:'SOC ' + avg.toFixed(1) + '% < ' + threshold + '% but battery OK (' + avail.toFixed(0) + '/' + need.toFixed(0) + 'kWh)'});\n    return null;\n}\n\n// SOC is below threshold and there is a real deficit - start generator\nflow.set('gen_state', 1);\nflow.set('evening_mode', true);\nflow.set('evening_fixed_stop', false);\nflow.set('evening_complete', false);\nflow.set('start_soc', avg);\nvar kwhNow = flow.get('last_kwh') || 0;\nflow.set('kwh_snapshot', kwhNow);\n\nnode.status({fill:'orange', text:'SOC ' + avg.toFixed(1) + '% < ' + threshold + '% deficit=' + (need-avail).toFixed(0) + 'kWh - gen ON'});\nreturn {payload: 1, topic: 'DO01'};",
         "outputs": 1,
         "noerr": 0,
         "initialize": "",
@@ -289,5 +289,36 @@
         "x": 840,
         "y": 580,
         "wires": []
+    },
+    {
+        "id": "tick_daily_reset",
+        "type": "inject",
+        "z": "gen_tab",
+        "name": "daily reset at 2pm",
+        "props": [{"p": "payload"}],
+        "repeat": "",
+        "crontab": "0 14 * * *",
+        "once": false,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 160,
+        "y": 700,
+        "wires": [["logic_daily_reset"]]
+    },
+    {
+        "id": "logic_daily_reset",
+        "type": "function",
+        "z": "gen_tab",
+        "name": "daily state reset",
+        "func": "flow.set('evening_complete', false);\nflow.set('evening_fixed_stop', false);\nflow.set('peak_captured', false);\nflow.set('peak_load_kw', null);\nflow.set('peak_buffer', []);\nnode.warn('Daily state reset at 2pm');\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 700,
+        "wires": [[]]
     }
 ]
